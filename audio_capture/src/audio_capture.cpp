@@ -216,8 +216,23 @@ namespace audio_transport
         gst_buffer_unmap(buffer, &map);
         gst_sample_unref(sample);
 
-        server->publish(msg);
-        server->publishStamped(stamped_msg);
+        // Convert the msg.data to a string
+        std::string dataAsString(msg.data.begin(), msg.data.end());
+        // Define the muted audio signature
+        const std::string muteSignature = "3.100";
+        
+        // Check for the muted pattern
+        if (dataAsString.find(muteSignature) == std::string::npos) 
+        {
+          // Muted pattern not found, indicating active audio
+          server->publish(msg);
+          server->publishStamped(stamped_msg);
+        } 
+        else 
+        {
+          // Muted pattern found, indicating the microphone is muted
+          ROS_INFO("Microphone is muted or inactive, not publishing");
+        }
 
         return GST_FLOW_OK;
       }
