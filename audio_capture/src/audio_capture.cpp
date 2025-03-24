@@ -220,20 +220,26 @@ namespace audio_transport
         std::string dataAsString(msg.data.begin(), msg.data.end());
         // Define the muted audio signature
         const std::string muteSignature = "3.100";
+
+        static bool wasMuted = false;
+        bool isMuted = (dataAsString.find(muteSignature) != std::string::npos);
         
-        // Check for the muted pattern
-        if (dataAsString.find(muteSignature) == std::string::npos) 
+        if (!isMuted)
         {
-          // Muted pattern not found, indicating active audio
+          if (wasMuted){
+            ROS_INFO("Microphone is now active");
+            wasMuted = false;
+          }
           server->publish(msg);
           server->publishStamped(stamped_msg);
-        } 
-        else 
-        {
-          // Muted pattern found, indicating the microphone is muted
-          ROS_INFO("Microphone is muted or inactive, not publishing");
         }
-
+        else
+        {
+          if(!wasMuted){
+            ROS_INFO("Microphone is muted or inactive, not publishing");
+            wasMuted = true;
+          }
+        }
         return GST_FLOW_OK;
       }
 
