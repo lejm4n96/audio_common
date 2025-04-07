@@ -8,6 +8,7 @@
 #include "audio_common_msgs/AudioData.h"
 #include "audio_common_msgs/AudioDataStamped.h"
 #include "audio_common_msgs/AudioInfo.h"
+#include "std_msgs/Bool.h"
 
 namespace audio_transport
 {
@@ -43,6 +44,7 @@ namespace audio_transport
         _pub = _nh.advertise<audio_common_msgs::AudioData>("audio", 10, true);
         _pub_stamped = _nh.advertise<audio_common_msgs::AudioDataStamped>("audio_stamped", 10, true);
         _pub_info = _nh.advertise<audio_common_msgs::AudioInfo>("audio_info", 1, true);
+        _pub_mic_status = _nh.advertise<std_msgs::Bool>("mic_status", 10, true);
 
         _loop = g_main_loop_new(NULL, false);
         _pipeline = gst_pipeline_new("ros_pipeline");
@@ -56,6 +58,10 @@ namespace audio_transport
         g_signal_connect(_bus, "message::error",
                          G_CALLBACK(onMessage), this);
         g_object_unref(_bus);
+
+        // Initialize mic status variables
+        _is_mic_muted = false;
+        _mic_status_changed = false;
 
         // We create the sink first, just for convenience
         if (dst_type == "appsink")
@@ -184,6 +190,54 @@ namespace audio_transport
         _pub_stamped.publish(msg);
       }
 
+      // Check if the data contains the signature "3.100" which indicates muted mic
+      bool isMicMuted(const std::vector<uint8_t> &data)
+      {
+        // Check for the "3.100" signature that indicates muted mic
+        // The signature appears as bytes [51, 46, 49, 48, 48] (ASCII "3.100")
+        
+        // Make sure we have enough data to check
+        if (data.size() < 22) {
+          return false; // Not enough data to check
+        }
+        
+        // Search for "3.100" pattern (ASCII values: 51 46 49 48 48)
+        for (size_t i = 10; i < data.size() - 5; i++) {
+          if (data[i] == 51 && data[i+1] == 46 && data[i+2] == 49 && 
+              data[i+3] == 48 && data[i+4] == 48) {
+            return true; // Found "3.100" pattern
+          }
+        }
+        
+        return false;
+      }
+      
+      // Publish mic status
+      void updateMicStatus(bool is_muted)
+      {
+        // Check if status has changed
+        if (_is_mic_muted != is_muted) {
+          _is_mic_muted = is_muted;
+          _mic_status_changed = true;
+        }
+        
+        if (!_is_mic_muted) {
+          std_msgs::Bool status_msg;
+          status_msg.data = true;  // true = unmuted
+          _pub_mic_status.publish(status_msg);
+        }
+    
+        // Handle logging only if status changed
+        if (_mic_status_changed) {
+            if (!_is_mic_muted) {
+                ROS_INFO_STREAM("Microphone is now UNMUTED");
+            } else {
+                ROS_INFO_STREAM("Microphone is now MUTED");
+            }
+            _mic_status_changed = false;
+        }
+      }
+
       static GstFlowReturn onNewBuffer (GstAppSink *appsink, gpointer userData)
       {
         audio_common_msgs::AudioData msg;
@@ -216,6 +270,10 @@ namespace audio_transport
         gst_buffer_unmap(buffer, &map);
         gst_sample_unref(sample);
 
+        // Check and update microphone status based on the "3.100" signature
+        bool is_muted = server->isMicMuted(msg.data);
+        server->updateMicStatus(is_muted);
+
         server->publish(msg);
         server->publishStamped(stamped_msg);
 
@@ -242,6 +300,7 @@ namespace audio_transport
       ros::Publisher _pub;
       ros::Publisher _pub_stamped;
       ros::Publisher _pub_info;
+      ros::Publisher _pub_mic_status;
 
       boost::thread _gst_thread;
 
@@ -250,6 +309,10 @@ namespace audio_transport
       int _bitrate, _channels, _depth, _sample_rate;
       GMainLoop *_loop;
       std::string _format, _sample_format;
+      
+      // Variables for mic status detection
+      bool _is_mic_muted;
+      bool _mic_status_changed;
   };
 }
 
